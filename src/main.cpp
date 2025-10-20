@@ -1,16 +1,17 @@
 /*
- * Sistema IoT de Estadísticas de Fútbol
+ * Sistema IoT de Estadísticas de Fútbol con Servidor Web Embebido
  * ESP32 + OLED SSD1306 + Football-Data.org + ThingSpeak
  * 
  * Funcionalidades:
- * - Selecciona liga y partido desde web
- * - Muestra estadísticas en vivo o finalizadas
- * - Corners, tiros a puerta, resultado
+ * - Servidor web en el ESP32 (acceso por IP)
+ * - Selecciona liga y partido desde navegador
+ * - Muestra estadísticas en OLED
  * - Actualización automática para partidos en vivo
  */
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WebServer.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
 #include <Wire.h>
@@ -23,8 +24,9 @@ const char* WIFI_SSID = "MOVISTAR WIFI7026";
 const char* WIFI_PASSWORD = "sebas0827";
 
 // ThingSpeak
-const char* THINGSPEAK_CHANNEL_ID = "3123536";
-const char* THINGSPEAK_READ_API_KEY = "AII9P7M8KAKUR0EW";
+const char* THINGSPEAK_CHANNEL_ID = "TU_NUEVO_CHANNEL_ID";
+const char* THINGSPEAK_READ_API_KEY = "TU_NUEVO_READ_API_KEY";
+const char* THINGSPEAK_WRITE_API_KEY = "TU_WRITE_API_KEY";
 
 // Football-Data.org
 const char* FOOTBALL_DATA_API_KEY = "6498ab2b943c4df9ab27ab91430ab8a2";
@@ -37,8 +39,15 @@ const char* FOOTBALL_DATA_API_KEY = "6498ab2b943c4df9ab27ab91430ab8a2";
 
 Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
+// Servidor Web en puerto 80
+WebServer server(80);
+
 // ==================== DECLARACIÓN DE FUNCIONES ====================
 void connectWiFi();
+void setupWebServer();
+void handleRoot();
+void handleSetMatch();
+void handleStatus();
 void checkThingSpeakData();
 void getMatchStatistics(int matchId);
 void displayMessage(String line1, String line2, String line3);
@@ -60,8 +69,8 @@ struct MatchStats {
   int awayShotsOnGoal;
   int homeShotsTotal;
   int awayShotsTotal;
-  String status; // "IN_PLAY", "FINISHED", "SCHEDULED", "PAUSED"
-  String matchDate; // Fecha del partido
+  String status;
+  String matchDate;
   int matchId;
   bool dataValid;
   unsigned long lastUpdate;
@@ -70,10 +79,469 @@ struct MatchStats {
 MatchStats currentMatch;
 unsigned long lastThingSpeakCheck = 0;
 unsigned long lastStatsUpdate = 0;
-const unsigned long THINGSPEAK_INTERVAL = 30000; // 30 segundos (para detectar nuevos partidos rápido)
-const unsigned long STATS_UPDATE_LIVE = 900000;   // 15 minutos (900000 ms) para partidos en vivo
-const unsigned long STATS_UPDATE_FINISHED = 900000; // 15 minutos para finalizados también
+const unsigned long THINGSPEAK_INTERVAL = 30000;
+const unsigned long STATS_UPDATE_LIVE = 900000;
+const unsigned long STATS_UPDATE_FINISHED = 900000;
 bool wifiConnected = false;
+
+// ==================== HTML DE LA PÁGINA WEB ====================
+const char HTML_PAGE[] PROGMEM = R"rawliteral(
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control ESP32 - Partidos</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            text-align: center;
+        }
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .ip-info {
+            background: #f0f0f0;
+            padding: 10px;
+            border-radius: 10px;
+            text-align: center;
+            margin-bottom: 20px;
+            font-size: 14px;
+            color: #555;
+        }
+        .section {
+            margin-bottom: 25px;
+        }
+        label {
+            display: block;
+            color: #555;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        input, select {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 14px;
+            display: none;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        .match-item {
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: white;
+        }
+        .match-item:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+        .match-item.selected {
+            border-color: #667eea;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        }
+        .match-teams {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 16px;
+        }
+        .match-info {
+            color: #666;
+            font-size: 13px;
+        }
+        .match-score {
+            float: right;
+            font-size: 20px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .badge.live {
+            background: #ff4757;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+        .badge.finished {
+            background: #28a745;
+            color: white;
+        }
+        .badge.scheduled {
+            background: #ffc107;
+            color: #333;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        .matches-container {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+            padding-right: 5px;
+        }
+        .matches-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        .matches-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        .matches-container::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .manual-section {
+            background: #fff3cd;
+            padding: 15px;
+            border-radius: 10px;
+            border: 2px dashed #ffc107;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚽ Control ESP32</h1>
+        <p class="subtitle">Sistema de Estadísticas de Fútbol en Tiempo Real</p>
+        <div class="ip-info" id="ipInfo">📡 Conectado al ESP32</div>
+        
+        <!-- Selección de Competición -->
+        <div class="section">
+            <label for="competition">🏆 Competición</label>
+            <select id="competition">
+                <option value="">-- Selecciona una competición --</option>
+                <option value="2021">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League (Inglaterra)</option>
+                <option value="2014">🇪🇸 La Liga (España)</option>
+                <option value="2002">🇩🇪 Bundesliga (Alemania)</option>
+                <option value="2019">🇮🇹 Serie A (Italia)</option>
+                <option value="2015">🇫🇷 Ligue 1 (Francia)</option>
+                <option value="2001">🇪🇺 UEFA Champions League</option>
+                <option value="2018">🇪🇺 UEFA Europa League</option>
+                <option value="2152">🇧🇷 Brasileirão (Brasil)</option>
+            </select>
+            <button class="btn" id="loadBtn" onclick="loadMatches()">📋 Cargar Partidos</button>
+        </div>
+        
+        <!-- Loader -->
+        <div class="loader" id="loader"></div>
+        
+        <!-- Filtro de Estado -->
+        <div class="section" id="filterSection" style="display: none;">
+            <label for="statusFilter">🔍 Filtrar por Estado</label>
+            <select id="statusFilter" onchange="filterMatches()">
+                <option value="ALL">Todos los partidos</option>
+                <option value="IN_PLAY">🔴 EN VIVO</option>
+                <option value="FINISHED">✅ Finalizados</option>
+                <option value="SCHEDULED">📅 Programados</option>
+            </select>
+        </div>
+        
+        <!-- Lista de Partidos -->
+        <div class="section" id="matchesSection" style="display: none;">
+            <label>⚽ Selecciona un Partido</label>
+            <div class="matches-container" id="matchesList"></div>
+        </div>
+        
+        <!-- Ingreso Manual -->
+        <div class="manual-section">
+            <label for="matchId">🎯 O ingresa el Match ID manualmente</label>
+            <input type="number" id="matchId" placeholder="Ej: 327120">
+            <button class="btn" onclick="sendManualMatch()" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">🚀 Enviar al ESP32</button>
+        </div>
+        
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        const API_KEY = '6498ab2b943c4df9ab27ab91430ab8a2';
+        let allMatches = [];
+        let selectedMatch = null;
+        
+        async function loadMatches() {
+            const competitionId = document.getElementById('competition').value;
+            
+            if (!competitionId) {
+                showStatus('Por favor selecciona una competición', 'error');
+                return;
+            }
+            
+            showStatus('Cargando partidos...', 'info');
+            document.getElementById('loader').style.display = 'block';
+            document.getElementById('loadBtn').disabled = true;
+            document.getElementById('matchesSection').style.display = 'none';
+            document.getElementById('filterSection').style.display = 'none';
+            
+            try {
+                const proxyUrl = 'https://corsproxy.io/?';
+                const apiUrl = 'https://api.football-data.org/v4/competitions/' + competitionId + '/matches';
+                
+                const response = await fetch(proxyUrl + encodeURIComponent(apiUrl), {
+                    headers: {
+                        'X-Auth-Token': API_KEY
+                    }
+                });
+                
+                if (!response.ok) throw new Error('Error HTTP: ' + response.status);
+                
+                const data = await response.json();
+                allMatches = data.matches || [];
+                
+                if (allMatches.length === 0) {
+                    showStatus('No hay partidos disponibles para esta competición', 'info');
+                    return;
+                }
+                
+                allMatches.sort((a, b) => {
+                    const statusOrder = { 'IN_PLAY': 0, 'PAUSED': 1, 'SCHEDULED': 2, 'TIMED': 2, 'FINISHED': 3 };
+                    return (statusOrder[a.status] || 4) - (statusOrder[b.status] || 4);
+                });
+                
+                document.getElementById('filterSection').style.display = 'block';
+                document.getElementById('matchesSection').style.display = 'block';
+                document.getElementById('statusFilter').value = 'ALL';
+                
+                displayMatches(allMatches);
+                showStatus('✅ ' + allMatches.length + ' partidos cargados correctamente', 'success');
+                
+            } catch (error) {
+                showStatus('❌ Error al cargar partidos: ' + error.message, 'error');
+            } finally {
+                document.getElementById('loader').style.display = 'none';
+                document.getElementById('loadBtn').disabled = false;
+            }
+        }
+        
+        function filterMatches() {
+            const filterValue = document.getElementById('statusFilter').value;
+            
+            if (filterValue === 'ALL') {
+                displayMatches(allMatches);
+            } else {
+                const filtered = allMatches.filter(match => match.status === filterValue);
+                displayMatches(filtered);
+            }
+        }
+        
+        function displayMatches(matches) {
+            const container = document.getElementById('matchesList');
+            container.innerHTML = '';
+            
+            if (matches.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">No hay partidos disponibles</p>';
+                return;
+            }
+            
+            matches.forEach(match => {
+                const div = document.createElement('div');
+                div.className = 'match-item';
+                div.onclick = () => selectMatch(match, div);
+                
+                const homeTeam = match.homeTeam.shortName || match.homeTeam.name;
+                const awayTeam = match.awayTeam.shortName || match.awayTeam.name;
+                const homeScore = match.score.fullTime.home ?? (match.score.regularTime.home ?? '-');
+                const awayScore = match.score.fullTime.away ?? (match.score.regularTime.away ?? '-');
+                
+                const statusBadge = getStatusBadge(match.status);
+                const date = new Date(match.utcDate);
+                const dateStr = date.toLocaleDateString('es-ES', { 
+                    day: '2-digit', 
+                    month: 'short', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                
+                div.innerHTML = `
+                    <div class="match-teams">
+                        ${homeTeam} vs ${awayTeam}
+                        ${statusBadge}
+                    </div>
+                    <div class="match-info">
+                        📅 ${dateStr} | ID: ${match.id}
+                        <span class="match-score">${homeScore} - ${awayScore}</span>
+                    </div>
+                `;
+                
+                container.appendChild(div);
+            });
+        }
+        
+        function selectMatch(match, element) {
+            document.querySelectorAll('.match-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            element.classList.add('selected');
+            selectedMatch = match;
+            
+            showStatus('Partido seleccionado: ' + match.homeTeam.name + ' vs ' + match.awayTeam.name, 'info');
+            
+            // Enviar automáticamente
+            sendMatchToESP32(match.id);
+        }
+        
+        function sendManualMatch() {
+            const matchId = document.getElementById('matchId').value;
+            
+            if (!matchId) {
+                showStatus('Por favor ingresa un Match ID', 'error');
+                return;
+            }
+            
+            sendMatchToESP32(matchId);
+        }
+        
+        function sendMatchToESP32(matchId) {
+            showStatus('Enviando al ESP32...', 'info');
+            
+            fetch('/setmatch?id=' + matchId)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showStatus('✅ Partido enviado correctamente al ESP32!', 'success');
+                    } else {
+                        showStatus('❌ Error: ' + data.message, 'error');
+                    }
+                })
+                .catch(error => {
+                    showStatus('❌ Error de conexión con el ESP32', 'error');
+                });
+        }
+        
+        function getStatusBadge(status) {
+            const badges = {
+                'IN_PLAY': '<span class="badge live">🔴 EN VIVO</span>',
+                'PAUSED': '<span class="badge live">⏸️ DESCANSO</span>',
+                'FINISHED': '<span class="badge finished">✅ FINALIZADO</span>',
+                'SCHEDULED': '<span class="badge scheduled">📅 PROGRAMADO</span>',
+                'TIMED': '<span class="badge scheduled">📅 PROGRAMADO</span>'
+            };
+            return badges[status] || '<span class="badge">' + status + '</span>';
+        }
+        
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = 'status ' + type;
+            
+            if (type !== 'error') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+        
+        // Obtener IP del ESP32
+        fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                // La IP se muestra en el OLED
+            })
+            .catch(error => console.log('Info de estado no disponible'));
+    </script>
+</body>
+</html>
+)rawliteral";
 
 // ==================== SETUP ====================
 void setup() {
@@ -83,7 +551,7 @@ void setup() {
   Serial.println("\n=== Sistema de Estadísticas de Fútbol ===");
   Serial.println("API: Football-Data.org");
   
-  // Inicializar I2C para OLED (GPIO 21=SDA, GPIO 22=SCL por defecto en ESP32)
+  // Inicializar I2C para OLED
   Wire.begin(21, 22);
   
   // Inicializar OLED
@@ -93,23 +561,32 @@ void setup() {
   }
   
   display.clearDisplay();
-  displayMessage("Iniciando...", "Sistema de", "Estadisticas");
+  displayMessage("Iniciando...", "Servidor Web", "ESP32");
   delay(2000);
   
   // Conectar WiFi
   connectWiFi();
+  
+  // Configurar servidor web
+  setupWebServer();
   
   // Inicializar estructura
   currentMatch.dataValid = false;
   currentMatch.matchId = 0;
   currentMatch.lastUpdate = 0;
   
-  displayMessage("Sistema Listo", "Esperando", "seleccion...");
-  Serial.println("Sistema listo. Esperando partido de ThingSpeak...");
+  displayMessage("Sistema Listo", "IP:", WiFi.localIP().toString());
+  Serial.println("========================================");
+  Serial.print("Accede a la interfaz web en: http://");
+  Serial.println(WiFi.localIP());
+  Serial.println("========================================");
 }
 
 // ==================== LOOP PRINCIPAL ====================
 void loop() {
+  // Manejar solicitudes web
+  server.handleClient();
+  
   // Verificar conexión WiFi
   if (WiFi.status() != WL_CONNECTED) {
     wifiConnected = false;
@@ -118,12 +595,6 @@ void loop() {
     return;
   } else {
     wifiConnected = true;
-  }
-  
-  // Verificar ThingSpeak periódicamente para nuevos partidos
-  if (millis() - lastThingSpeakCheck >= THINGSPEAK_INTERVAL) {
-    lastThingSpeakCheck = millis();
-    checkThingSpeakData();
   }
   
   // Actualizar estadísticas si hay un partido seleccionado
@@ -138,7 +609,58 @@ void loop() {
     }
   }
   
-  delay(100);
+  delay(10);
+}
+
+// ==================== SERVIDOR WEB ====================
+void setupWebServer() {
+  server.on("/", handleRoot);
+  server.on("/setmatch", handleSetMatch);
+  server.on("/status", handleStatus);
+  
+  server.begin();
+  Serial.println("Servidor web iniciado");
+}
+
+void handleRoot() {
+  server.send(200, "text/html", HTML_PAGE);
+}
+
+void handleSetMatch() {
+  if (server.hasArg("id")) {
+    int matchId = server.arg("id").toInt();
+    
+    if (matchId > 0) {
+      Serial.print("Nuevo partido recibido desde web: ");
+      Serial.println(matchId);
+      
+      currentMatch.matchId = matchId;
+      currentMatch.status = "SCHEDULED";
+      
+      displayMessage("Cargando", "partido...", String(matchId));
+      getMatchStatistics(matchId);
+      
+      server.send(200, "application/json", "{\"success\":true,\"message\":\"Partido configurado\"}");
+    } else {
+      server.send(400, "application/json", "{\"success\":false,\"message\":\"Match ID inválido\"}");
+    }
+  } else {
+    server.send(400, "application/json", "{\"success\":false,\"message\":\"Falta parámetro id\"}");
+  }
+}
+
+void handleStatus() {
+  String json = "{";
+  json += "\"matchId\":" + String(currentMatch.matchId) + ",";
+  json += "\"homeTeam\":\"" + currentMatch.homeTeam + "\",";
+  json += "\"awayTeam\":\"" + currentMatch.awayTeam + "\",";
+  json += "\"homeScore\":" + String(currentMatch.homeScore) + ",";
+  json += "\"awayScore\":" + String(currentMatch.awayScore) + ",";
+  json += "\"status\":\"" + getStatusText(currentMatch.status) + "\",";
+  json += "\"dataValid\":" + String(currentMatch.dataValid ? "true" : "false");
+  json += "}";
+  
+  server.send(200, "application/json", json);
 }
 
 // ==================== CONEXIÓN WiFi ====================
@@ -176,61 +698,6 @@ void connectWiFi() {
   }
 }
 
-// ==================== THINGSPEAK ====================
-void checkThingSpeakData() {
-  if (!wifiConnected) return;
-  
-  Serial.println("\n--- Consultando ThingSpeak ---");
-  
-  HTTPClient http;
-  String url = "https://api.thingspeak.com/channels/" + String(THINGSPEAK_CHANNEL_ID) + 
-               "/feeds/last.json?api_key=" + String(THINGSPEAK_READ_API_KEY);
-  
-  http.begin(url);
-  int httpCode = http.GET();
-  
-  if (httpCode == 200) {
-    String payload = http.getString();
-    Serial.println("Respuesta ThingSpeak recibida");
-    
-    StaticJsonDocument<1024> doc;
-    DeserializationError error = deserializeJson(doc, payload);
-    
-    if (!error) {
-      // ThingSpeak fields:
-      // field1: match_id (ID del partido)
-      // field2: status (IN_PLAY, FINISHED, etc.)
-      
-      String field1 = doc["field1"].as<String>();
-      String field2 = doc["field2"].as<String>();
-      
-      if (field1.length() > 0) {
-        int newMatchId = field1.toInt();
-        
-        // Verificar si es un partido nuevo
-        if (newMatchId != currentMatch.matchId || !currentMatch.dataValid) {
-          Serial.print("Nuevo partido detectado: ");
-          Serial.println(newMatchId);
-          
-          currentMatch.matchId = newMatchId;
-          currentMatch.status = field2.length() > 0 ? field2 : "FINISHED";
-          
-          displayMessage("Cargando", "partido...", "");
-          getMatchStatistics(newMatchId);
-        }
-      }
-    } else {
-      Serial.print("Error parseando JSON: ");
-      Serial.println(error.c_str());
-    }
-  } else {
-    Serial.print("Error HTTP ThingSpeak: ");
-    Serial.println(httpCode);
-  }
-  
-  http.end();
-}
-
 // ==================== FOOTBALL-DATA.ORG ====================
 void getMatchStatistics(int matchId) {
   if (!wifiConnected || matchId == 0) return;
@@ -251,16 +718,13 @@ void getMatchStatistics(int matchId) {
   if (httpCode == 200) {
     String payload = http.getString();
     
-    // Parsear respuesta
     DynamicJsonDocument doc(8192);
     DeserializationError error = deserializeJson(doc, payload);
     
     if (!error) {
-      // Extraer información básica
       currentMatch.homeTeam = cleanSpecialChars(doc["homeTeam"]["shortName"].as<String>());
       currentMatch.awayTeam = cleanSpecialChars(doc["awayTeam"]["shortName"].as<String>());
       
-      // Si no hay shortName, usar el nombre completo
       if (currentMatch.homeTeam.length() == 0) {
         currentMatch.homeTeam = cleanSpecialChars(doc["homeTeam"]["name"].as<String>());
       }
@@ -268,12 +732,10 @@ void getMatchStatistics(int matchId) {
         currentMatch.awayTeam = cleanSpecialChars(doc["awayTeam"]["name"].as<String>());
       }
       
-      // Marcador
       JsonObject score = doc["score"]["fullTime"];
       currentMatch.homeScore = score["home"] | 0;
       currentMatch.awayScore = score["away"] | 0;
       
-      // Si el partido está en juego, usar el marcador regular
       if (doc["status"].as<String>() == "IN_PLAY" || doc["status"].as<String>() == "PAUSED") {
         JsonObject regularScore = doc["score"]["regularTime"];
         if (!regularScore.isNull()) {
@@ -284,7 +746,6 @@ void getMatchStatistics(int matchId) {
       
       currentMatch.status = doc["status"].as<String>();
       
-      // Extraer fecha del partido
       String utcDate = doc["utcDate"].as<String>();
       currentMatch.matchDate = formatDate(utcDate);
       
@@ -300,28 +761,9 @@ void getMatchStatistics(int matchId) {
       Serial.print("  Estado: ");
       Serial.println(currentMatch.status);
       
-      // Extraer estadísticas si están disponibles
-      // Nota: Football-Data.org no siempre tiene estadísticas detalladas en tiempo real
-      // Dependiendo del plan, podrías no tener acceso a corners y tiros
-      
-      // Inicializar valores por defecto
-      currentMatch.homeCorners = 0;
-      currentMatch.awayCorners = 0;
-      currentMatch.homeShotsOnGoal = 0;
-      currentMatch.awayShotsOnGoal = 0;
-      currentMatch.homeShotsTotal = 0;
-      currentMatch.awayShotsTotal = 0;
-      
-      // Intentar obtener estadísticas (si están disponibles)
-      // Football-Data.org no proporciona estadísticas en tiempo real en el plan gratuito
-      // Solo muestra información básica del partido
-      
-      Serial.println("Nota: Estadísticas detalladas (corners/tiros) no disponibles en Football-Data.org API gratuita");
-      
       currentMatch.dataValid = true;
       currentMatch.lastUpdate = millis();
       
-      // Mostrar en OLED
       displayMatchBasic();
       
     } else {
@@ -371,18 +813,15 @@ void displayMatchBasic() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
   
-  // Fecha del partido (arriba)
   display.setTextSize(1);
   display.setCursor(0, 0);
   display.print(currentMatch.matchDate);
   
-  // Estado del partido
   display.setCursor(0, 10);
   display.print("Estado: ");
   display.println(getStatusText(currentMatch.status));
   display.drawLine(0, 20, 128, 20, SSD1306_WHITE);
   
-  // Nombres de equipos (acortados si es necesario)
   display.setCursor(0, 25);
   String homeShort = shortenTeamName(currentMatch.homeTeam, 11);
   String awayShort = shortenTeamName(currentMatch.awayTeam, 11);
@@ -390,17 +829,15 @@ void displayMatchBasic() {
   display.setCursor(0, 42);
   display.println(awayShort);
   
-  // Marcador grande
   display.setTextSize(2);
   display.setCursor(85, 25);
   display.print(currentMatch.homeScore);
   display.setCursor(85, 42);
   display.print(currentMatch.awayScore);
   
-  // Indicador de actualización
   display.setTextSize(1);
   display.setCursor(0, 57);
-  int minAgo = (millis() - currentMatch.lastUpdate) / 60000; // Minutos en lugar de segundos
+  int minAgo = (millis() - currentMatch.lastUpdate) / 60000;
   display.print("Act: ");
   display.print(minAgo);
   display.print("m");
@@ -411,7 +848,6 @@ void displayMatchBasic() {
 String shortenTeamName(String name, int maxLen) {
   if (name.length() <= maxLen) return name;
   
-  // Eliminar palabras comunes
   name.replace(" FC", "");
   name.replace(" CF", "");
   name.replace(" United", "");
@@ -420,7 +856,6 @@ String shortenTeamName(String name, int maxLen) {
   
   if (name.length() <= maxLen) return name;
   
-  // Truncar y agregar puntos
   return name.substring(0, maxLen - 1) + ".";
 }
 
@@ -437,38 +872,28 @@ String getStatusText(String status) {
 }
 
 String formatDate(String utcDate) {
-  // utcDate viene en formato: "2024-01-15T20:00:00Z"
-  // Extraer: año, mes, día
-  
   if (utcDate.length() < 10) return "Sin fecha";
   
-  String year = utcDate.substring(2, 4);   // "24"
-  String month = utcDate.substring(5, 7);  // "01"
-  String day = utcDate.substring(8, 10);   // "15"
+  String year = utcDate.substring(2, 4);
+  String month = utcDate.substring(5, 7);
+  String day = utcDate.substring(8, 10);
   
-  // Nombres de meses
   String monthNames[] = {"Ene", "Feb", "Mar", "Abr", "May", "Jun", 
                          "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"};
   
   int monthInt = month.toInt();
   String monthName = (monthInt >= 1 && monthInt <= 12) ? monthNames[monthInt - 1] : month;
   
-  // Formato: "15 Ene 2024"
   return day + " " + monthName + " " + "20" + year;
 }
 
 String cleanSpecialChars(String text) {
-  // Reemplazar caracteres especiales comunes
-  
-  // Caracteres acentuados
   text.replace("á", "a"); text.replace("Á", "A");
   text.replace("é", "e"); text.replace("É", "E");
   text.replace("í", "i"); text.replace("Í", "I");
   text.replace("ó", "o"); text.replace("Ó", "O");
   text.replace("ú", "u"); text.replace("Ú", "U");
   text.replace("ü", "u"); text.replace("Ü", "U");
-  
-  // Caracteres especiales específicos
   text.replace("ñ", "n"); text.replace("Ñ", "N");
   text.replace("ç", "c"); text.replace("Ç", "C");
   text.replace("ã", "a"); text.replace("Ã", "A");
@@ -478,8 +903,6 @@ String cleanSpecialChars(String text) {
   text.replace("î", "i"); text.replace("Î", "I");
   text.replace("ô", "o"); text.replace("Ô", "O");
   text.replace("û", "u"); text.replace("Û", "U");
-  
-  // Otros caracteres
   text.replace("'", "'"); text.replace("'", "'");
   text.replace("–", "-"); text.replace("—", "-");
   
