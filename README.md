@@ -538,7 +538,20 @@ ASCII Art Generator
 📄 Licencia
 Este proyecto es de código abierto y está disponible bajo la licencia MIT.
 
+👤 Autor
+Proyecto Académico - IoT con ESP32
 
+Curso: Internet de las Cosas
+Institución: [Tu Universidad]
+Fecha: Octubre 2025
+🤝 Contribuciones
+Si deseas mejorar este proyecto:
+
+Fork el repositorio
+Crea una rama para tu feature (git checkout -b feature/mejora)
+Commit tus cambios (git commit -m 'Agrega nueva funcionalidad')
+Push a la rama (git push origin feature/mejora)
+Abre un Pull Request
 ⚡ Quick Start (Resumen)
 bash
 # 1. Configurar APIs
