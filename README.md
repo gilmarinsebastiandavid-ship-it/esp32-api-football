@@ -717,28 +717,6 @@ Este proyecto es de código abierto y está disponible bajo la licencia MIT.
 
 ---
 
-## 👤 Autor
-
-**Proyecto Académico - IoT con ESP32**
-
-- Curso: Internet de las Cosas
-- Institución: [Tu Universidad]
-- Fecha: Octubre 2025
-
----
-
-## 🤝 Contribuciones
-
-Si deseas mejorar este proyecto:
-
-1. Fork el repositorio
-2. Crea una rama para tu feature (`git checkout -b feature/mejora`)
-3. Commit tus cambios (`git commit -m 'Agrega nueva funcionalidad'`)
-4. Push a la rama (`git push origin feature/mejora`)
-5. Abre un Pull Request
-
----
-
 ## ⚡ Quick Start (Resumen)
 
 ```bash
