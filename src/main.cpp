@@ -7,6 +7,7 @@
  * - Selecciona liga y partido desde navegador
  * - Muestra estadísticas en OLED
  * - Actualización automática para partidos en vivo
+ * - Registro histórico en ThingSpeak
  */
 
 #include <Arduino.h>
@@ -24,9 +25,9 @@ const char* WIFI_SSID = "MOVISTAR WIFI7026";
 const char* WIFI_PASSWORD = "sebas0827";
 
 // ThingSpeak
-const char* THINGSPEAK_CHANNEL_ID = "TU_NUEVO_CHANNEL_ID";
-const char* THINGSPEAK_READ_API_KEY = "TU_NUEVO_READ_API_KEY";
-const char* THINGSPEAK_WRITE_API_KEY = "TU_WRITE_API_KEY";
+const char* THINGSPEAK_CHANNEL_ID = "3123536";
+const char* THINGSPEAK_READ_API_KEY = "AII9P7M8KAKUR0EW";
+const char* THINGSPEAK_WRITE_API_KEY = "UKIRSQBDTL8HOZE8";
 
 // Football-Data.org
 const char* FOOTBALL_DATA_API_KEY = "6498ab2b943c4df9ab27ab91430ab8a2";
@@ -48,8 +49,8 @@ void setupWebServer();
 void handleRoot();
 void handleSetMatch();
 void handleStatus();
-void checkThingSpeakData();
 void getMatchStatistics(int matchId);
+void sendDataToThingSpeak();
 void displayMessage(String line1, String line2, String line3);
 void displayMatchBasic();
 String shortenTeamName(String name, int maxLen = 12);
@@ -318,7 +319,7 @@ const char HTML_PAGE[] PROGMEM = R"rawliteral(
                 <option value="2015">🇫🇷 Ligue 1 (Francia)</option>
                 <option value="2001">🇪🇺 UEFA Champions League</option>
                 <option value="2018">🇪🇺 UEFA Europa League</option>
-                <option value="2152">🇧🇷 Brasileirão (Brasil)</option>
+                <option value="2013">🇧🇷 Brasileirão (Brasil)</option>
             </select>
             <button class="btn" id="loadBtn" onclick="loadMatches()">📋 Cargar Partidos</button>
         </div>
@@ -550,6 +551,7 @@ void setup() {
   
   Serial.println("\n=== Sistema de Estadísticas de Fútbol ===");
   Serial.println("API: Football-Data.org");
+  Serial.println("Historial: ThingSpeak");
   
   // Inicializar I2C para OLED
   Wire.begin(21, 22);
@@ -766,6 +768,9 @@ void getMatchStatistics(int matchId) {
       
       displayMatchBasic();
       
+      // 🆕 ENVIAR DATOS A THINGSPEAK PARA HISTORIAL
+      sendDataToThingSpeak();
+      
     } else {
       Serial.print("Error parseando JSON: ");
       Serial.println(error.c_str());
@@ -784,6 +789,42 @@ void getMatchStatistics(int matchId) {
     } else {
       displayMessage("Error API", "HTTP: " + String(httpCode), "");
     }
+  }
+  
+  http.end();
+}
+
+// ==================== THINGSPEAK ====================
+void sendDataToThingSpeak() {
+  if (!wifiConnected || !currentMatch.dataValid) return;
+  
+  Serial.println("\n--- Enviando datos a ThingSpeak ---");
+  
+  HTTPClient http;
+  
+  // Obtener texto del estado en español
+  String statusText = getStatusText(currentMatch.status);
+  
+  // Construir URL con parámetros
+  String url = "https://api.thingspeak.com/update?api_key=";
+  url += THINGSPEAK_WRITE_API_KEY;
+  url += "&field1=" + String(currentMatch.matchId);
+  url += "&field2=" + String(currentMatch.homeScore);
+  url += "&field3=" + String(currentMatch.awayScore);
+  url += "&field4=" + statusText;
+  
+  http.begin(url);
+  int httpCode = http.GET();
+  
+  if (httpCode > 0) {
+    String response = http.getString();
+    Serial.print("✅ Datos enviados a ThingSpeak: Entry #");
+    Serial.println(response);
+    Serial.print("   Estado enviado: ");
+    Serial.println(statusText);
+  } else {
+    Serial.print("❌ Error enviando a ThingSpeak: ");
+    Serial.println(httpCode);
   }
   
   http.end();
