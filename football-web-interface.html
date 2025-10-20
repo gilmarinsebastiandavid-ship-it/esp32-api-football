@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Control ESP32 - Partidos de Fútbol</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 28px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        
+        .section {
+            margin-bottom: 25px;
+        }
+        
+        label {
+            display: block;
+            color: #555;
+            font-weight: 600;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        
+        select, input {
+            width: 100%;
+            padding: 12px 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 15px;
+            transition: all 0.3s;
+            background: white;
+        }
+        
+        select:focus, input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+        
+        select:disabled, input:disabled {
+            background: #f5f5f5;
+            cursor: not-allowed;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin-top: 10px;
+        }
+        
+        .btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.3);
+        }
+        
+        .btn:active:not(:disabled) {
+            transform: translateY(0);
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        
+        .match-item {
+            padding: 15px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            background: white;
+        }
+        
+        .match-item:hover {
+            border-color: #667eea;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.2);
+            transform: translateY(-2px);
+        }
+        
+        .match-item.selected {
+            border-color: #667eea;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+        }
+        
+        .match-teams {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+            font-size: 16px;
+        }
+        
+        .match-info {
+            color: #666;
+            font-size: 13px;
+        }
+        
+        .match-score {
+            float: right;
+            font-size: 20px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        
+        .badge.live {
+            background: #ff4757;
+            color: white;
+            animation: pulse 2s infinite;
+        }
+        
+        .badge.finished {
+            background: #28a745;
+            color: white;
+        }
+        
+        .badge.scheduled {
+            background: #ffc107;
+            color: #333;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+        
+        .matches-container {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 15px;
+            padding-right: 5px;
+        }
+        
+        .matches-container::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .matches-container::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        
+        .matches-container::-webkit-scrollbar-thumb {
+            background: #667eea;
+            border-radius: 10px;
+        }
+        
+        .loader {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+            display: none;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .config-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 30px;
+        }
+        
+        .config-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .help-text {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚽ Control ESP32</h1>
+        <p class="subtitle">Sistema de Estadísticas de Fútbol en Tiempo Real</p>
+        
+        <!-- Sección 1: Selección de Competición -->
+        <div class="section">
+            <label for="competition">🏆 Competición</label>
+            <select id="competition">
+                <option value="">-- Selecciona una competición --</option>
+                <option value="2021">🏴󠁧󠁢󠁥󠁮󠁧󠁿 Premier League (Inglaterra)</option>
+                <option value="2014">🇪🇸 La Liga (España)</option>
+                <option value="2002">🇩🇪 Bundesliga (Alemania)</option>
+                <option value="2019">🇮🇹 Serie A (Italia)</option>
+                <option value="2015">🇫🇷 Ligue 1 (Francia)</option>
+                <option value="2001">🇪🇺 UEFA Champions League</option>
+                <option value="2018">🇪🇺 UEFA Europa League</option>
+                <option value="2152">🇧🇷 Brasileirão (Brasil)</option>
+                <option value="2013">🇧🇷 Copa Libertadores</option>
+            </select>
+            <button class="btn" id="loadBtn">📋 Cargar Partidos</button>
+        </div>
+        
+        <!-- NUEVO: Opción Manual -->
+        <div class="section" style="background: #fff3cd; padding: 15px; border-radius: 10px; border: 2px dashed #ffc107;">
+            <label for="manualMatchId">🎯 O ingresa el Match ID manualmente</label>
+            <input type="number" id="manualMatchId" placeholder="Ej: 123456">
+            <p class="help-text">Encuentra el Match ID en: <a href="https://www.football-data.org/documentation/quickstart" target="_blank">Football-Data.org</a></p>
+            <button class="btn btn-secondary" id="manualSendBtn" style="margin-top: 10px;">🚀 Enviar Directo al ESP32</button>
+        </div>
+        
+        <!-- Loader -->
+        <div class="loader" id="loader"></div>
+        
+        <!-- Sección 2: Filtro de Estado -->
+        <div class="section" id="filterSection" style="display: none;">
+            <label for="statusFilter">🔍 Filtrar por Estado</label>
+            <select id="statusFilter">
+                <option value="ALL">Todos los partidos</option>
+                <option value="IN_PLAY">🔴 EN VIVO</option>
+                <option value="FINISHED">✅ Finalizados</option>
+                <option value="SCHEDULED">📅 Programados</option>
+            </select>
+        </div>
+        
+        <!-- Sección 3: Lista de Partidos -->
+        <div class="section" id="matchesSection" style="display: none;">
+            <label>⚽ Selecciona un Partido</label>
+            <div class="matches-container" id="matchesList"></div>
+        </div>
+        
+        <!-- Sección 4: Enviar al ESP32 -->
+        <div class="section" id="sendSection" style="display: none;">
+            <button class="btn btn-secondary" id="sendBtn">📡 Enviar al ESP32</button>
+        </div>
+        
+        <!-- Configuración ThingSpeak -->
+        <div class="config-section">
+            <div class="config-title">⚙️ Configuración ThingSpeak</div>
+            <label for="channelId">Channel ID</label>
+            <input type="text" id="channelId" placeholder="Ej: 3122609">
+            <p class="help-text">Encuentra esto en tu canal de ThingSpeak</p>
+            
+            <label for="writeApiKey" style="margin-top: 15px;">Write API Key</label>
+            <input type="password" id="writeApiKey" placeholder="Ej: XXXXXXXXXXXXXXXXX">
+            <p class="help-text">Encuentra esto en la pestaña "API Keys" de tu canal</p>
+        </div>
+        
+        <!-- Mensajes de Estado -->
+        <div class="status" id="status"></div>
+    </div>
+
+    <script>
+        // ==================== CONFIGURACIÓN ====================
+        const FOOTBALL_API_KEY = '6498ab2b943c4df9ab27ab91430ab8a2';
+        
+        // Variables globales
+        let allMatches = [];
+        let selectedMatch = null;
+        
+        // Elementos del DOM
+        const competitionSelect = document.getElementById('competition');
+        const loadBtn = document.getElementById('loadBtn');
+        const loader = document.getElementById('loader');
+        const filterSection = document.getElementById('filterSection');
+        const statusFilter = document.getElementById('statusFilter');
+        const matchesSection = document.getElementById('matchesSection');
+        const matchesList = document.getElementById('matchesList');
+        const sendSection = document.getElementById('sendSection');
+        const sendBtn = document.getElementById('sendBtn');
+        const statusDiv = document.getElementById('status');
+        const channelIdInput = document.getElementById('channelId');
+        const writeApiKeyInput = document.getElementById('writeApiKey');
+        const manualMatchIdInput = document.getElementById('manualMatchId');
+        const manualSendBtn = document.getElementById('manualSendBtn');
+        
+        // Cargar configuración guardada
+        window.addEventListener('DOMContentLoaded', () => {
+            const savedChannelId = localStorage.getItem('thingspeak_channel');
+            const savedApiKey = localStorage.getItem('thingspeak_write_key');
+            
+            if (savedChannelId) channelIdInput.value = savedChannelId;
+            if (savedApiKey) writeApiKeyInput.value = savedApiKey;
+        });
+        
+        // Guardar configuración al cambiar
+        channelIdInput.addEventListener('change', () => {
+            localStorage.setItem('thingspeak_channel', channelIdInput.value);
+        });
+        
+        writeApiKeyInput.addEventListener('change', () => {
+            localStorage.setItem('thingspeak_write_key', writeApiKeyInput.value);
+        });
+        
+        // ==================== EVENT LISTENERS ====================
+        loadBtn.addEventListener('click', loadMatches);
+        statusFilter.addEventListener('change', filterMatches);
+        sendBtn.addEventListener('click', sendToESP32);
+        manualSendBtn.addEventListener('click', sendManualMatch);
+        
+        // ==================== FUNCIONES PRINCIPALES ====================
+        
+        async function loadMatches() {
+            const competitionId = competitionSelect.value;
+            
+            if (!competitionId) {
+                showStatus('Por favor selecciona una competición', 'error');
+                return;
+            }
+            
+            showStatus('Cargando partidos...', 'info');
+            loader.style.display = 'block';
+            loadBtn.disabled = true;
+            matchesSection.style.display = 'none';
+            filterSection.style.display = 'none';
+            sendSection.style.display = 'none';
+            
+            try {
+                // Usar proxy CORS confiable
+                const apiUrl = `https://api.football-data.org/v4/competitions/${competitionId}/matches`;
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(apiUrl)}`;
+                
+                console.log('🔍 Intentando conectar a:', apiUrl);
+                console.log('🔑 API Key:', FOOTBALL_API_KEY.substring(0, 10) + '...');
+                console.log('🌐 Usando proxy:', proxyUrl);
+                
+                const response = await fetch(proxyUrl, {
+                    method: 'GET',
+                    headers: {
+                        'X-Auth-Token': FOOTBALL_API_KEY,
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                console.log('📡 Respuesta HTTP:', response.status, response.statusText);
+                
+                if (!response.ok) {
+                    if (response.status === 429) {
+                        throw new Error('Límite de requests alcanzado. Espera 1 minuto.');
+                    } else if (response.status === 403) {
+                        throw new Error('API Key inválida o sin permisos.');
+                    } else if (response.status === 404) {
+                        throw new Error('Competición no encontrada.');
+                    } else {
+                        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    }
+                }
+                
+                const data = await response.json();
+                allMatches = data.matches || [];
+                
+                if (allMatches.length === 0) {
+                    showStatus('No hay partidos disponibles para esta competición', 'info');
+                    return;
+                }
+                
+                // Ordenar: EN VIVO primero, luego programados, luego finalizados
+                allMatches.sort((a, b) => {
+                    const statusOrder = { 'IN_PLAY': 0, 'PAUSED': 1, 'SCHEDULED': 2, 'TIMED': 2, 'FINISHED': 3 };
+                    return (statusOrder[a.status] || 4) - (statusOrder[b.status] || 4);
+                });
+                
+                filterSection.style.display = 'block';
+                matchesSection.style.display = 'block';
+                statusFilter.value = 'ALL';
+                
+                displayMatches(allMatches);
+                showStatus(`✅ ${allMatches.length} partidos cargados correctamente`, 'success');
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`❌ Error al cargar partidos: ${error.message}. Verifica tu API Key.`, 'error');
+            } finally {
+                loader.style.display = 'none';
+                loadBtn.disabled = false;
+            }
+        }
+        
+        function filterMatches() {
+            const filterValue = statusFilter.value;
+            
+            if (filterValue === 'ALL') {
+                displayMatches(allMatches);
+            } else {
+                const filtered = allMatches.filter(match => match.status === filterValue);
+                displayMatches(filtered);
+                
+                if (filtered.length === 0) {
+                    showStatus(`No hay partidos con estado: ${getStatusBadge(filterValue)}`, 'info');
+                }
+            }
+        }
+        
+        function displayMatches(matches) {
+            matchesList.innerHTML = '';
+            
+            if (matches.length === 0) {
+                matchesList.innerHTML = '<p style="text-align: center; color: #999; padding: 20px;">No hay partidos disponibles</p>';
+                return;
+            }
+            
+            matches.forEach(match => {
+                const matchDiv = document.createElement('div');
+                matchDiv.className = 'match-item';
+                matchDiv.onclick = () => selectMatch(match, matchDiv);
+                
+                const homeTeam = match.homeTeam.shortName || match.homeTeam.name;
+                const awayTeam = match.awayTeam.shortName || match.awayTeam.name;
+                const homeScore = match.score.fullTime.home ?? (match.score.regularTime.home ?? '-');
+                const awayScore = match.score.fullTime.away ?? (match.score.regularTime.away ?? '-');
+                
+                const statusBadge = getStatusBadge(match.status);
+                const date = new Date(match.utcDate);
+                const dateStr = date.toLocaleDateString('es-ES', { 
+                    day: '2-digit', 
+                    month: 'short', 
+                    hour: '2-digit', 
+                    minute: '2-digit' 
+                });
+                
+                matchDiv.innerHTML = `
+                    <div class="match-teams">
+                        ${homeTeam} vs ${awayTeam}
+                        ${statusBadge}
+                    </div>
+                    <div class="match-info">
+                        📅 ${dateStr} | ID: ${match.id}
+                        <span class="match-score">${homeScore} - ${awayScore}</span>
+                    </div>
+                `;
+                
+                matchesList.appendChild(matchDiv);
+            });
+        }
+        
+        function selectMatch(match, element) {
+            // Remover selección anterior
+            document.querySelectorAll('.match-item').forEach(item => {
+                item.classList.remove('selected');
+            });
+            
+            // Seleccionar nuevo
+            element.classList.add('selected');
+            selectedMatch = match;
+            sendSection.style.display = 'block';
+            
+            showStatus(`Partido seleccionado: ${match.homeTeam.name} vs ${match.awayTeam.name}`, 'info');
+        }
+        
+        async function sendToESP32() {
+            if (!selectedMatch) {
+                showStatus('Por favor selecciona un partido primero', 'error');
+                return;
+            }
+            
+            await sendMatchToThingSpeak(selectedMatch.id, selectedMatch.status);
+        }
+        
+        async function sendManualMatch() {
+            const matchId = manualMatchIdInput.value.trim();
+            
+            if (!matchId) {
+                showStatus('Por favor ingresa un Match ID', 'error');
+                return;
+            }
+            
+            await sendMatchToThingSpeak(matchId, 'FINISHED');
+        }
+        
+        async function sendMatchToThingSpeak(matchId, status) {
+            const channelId = channelIdInput.value.trim();
+            const writeApiKey = writeApiKeyInput.value.trim();
+            
+            if (!channelId || !writeApiKey) {
+                showStatus('Por favor completa la configuración de ThingSpeak', 'error');
+                return;
+            }
+            
+            showStatus('Enviando al ESP32...', 'info');
+            sendBtn.disabled = true;
+            manualSendBtn.disabled = true;
+            
+            try {
+                // Enviar a ThingSpeak
+                const url = `https://api.thingspeak.com/update?api_key=${writeApiKey}&field1=${matchId}&field2=${status}`;
+                
+                const response = await fetch(url);
+                const result = await response.text();
+                
+                if (result !== "0") {
+                    showStatus(`✅ Partido enviado correctamente al ESP32! Entry: ${result}`, 'success');
+                    console.log('Match ID:', matchId);
+                    console.log('Status:', status);
+                } else {
+                    throw new Error('ThingSpeak devolvió 0 (error de API Key o límite excedido)');
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                showStatus(`❌ Error al enviar: ${error.message}`, 'error');
+            } finally {
+                sendBtn.disabled = false;
+                manualSendBtn.disabled = false;
+            }
+        }
+        
+        function getStatusBadge(status) {
+            const badges = {
+                'IN_PLAY': '<span class="badge live">🔴 EN VIVO</span>',
+                'PAUSED': '<span class="badge live">⏸️ DESCANSO</span>',
+                'FINISHED': '<span class="badge finished">✅ FINALIZADO</span>',
+                'SCHEDULED': '<span class="badge scheduled">📅 PROGRAMADO</span>',
+                'TIMED': '<span class="badge scheduled">📅 PROGRAMADO</span>',
+                'POSTPONED': '<span class="badge">⏰ POSPUESTO</span>',
+                'CANCELLED': '<span class="badge">❌ CANCELADO</span>',
+                'SUSPENDED': '<span class="badge">⏸️ SUSPENDIDO</span>'
+            };
+            
+            return badges[status] || `<span class="badge">${status}</span>`;
+        }
+        
+        function showStatus(message, type) {
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+            
+            // Auto-ocultar mensajes después de 5 segundos (excepto errores)
+            if (type !== 'error') {
+                setTimeout(() => {
+                    statusDiv.style.display = 'none';
+                }, 5000);
+            }
+        }
+    </script>
+</body>
+</html>
