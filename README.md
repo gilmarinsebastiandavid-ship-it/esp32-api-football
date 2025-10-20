@@ -1052,4 +1052,3 @@ El sistema es **robusto**, **escalable** y cumple con los objetivos académicos 
 
 ---
 
-**Hecho con ❤️ y ⚽ por [Tu Nombre]**
